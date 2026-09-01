@@ -7,6 +7,12 @@ import { PRODUCT_PRICE, getShippingPrice } from '@/lib/shipping';
 import SuccessModal from './SuccessModal';
 import DuplicateModal from './DuplicateModal';
 
+declare global {
+  interface Window {
+    fbq?: (...args: any[]) => void;
+  }
+}
+
 interface FormData {
   fullName: string;
   phone: string;
@@ -133,24 +139,43 @@ export default function OrderForm() {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+ const handleSubmit = async (e: React.FormEvent) => {
   e.preventDefault();
+
   if (isSubmitting) return;
 
-  // Basic manual check so it never gets stuck silently
-  if (!formData.fullName || !formData.phone || !formData.wilaya || !formData.commune) {
+  // Basic client-side required-field check
+  if (
+    !formData.fullName.trim() ||
+    !formData.phone.trim() ||
+    !formData.wilaya ||
+    !formData.commune
+  ) {
     setErrors({
-      fullName: !formData.fullName ? 'الرجاء إدخال الاسم الكامل' : '',
-      phone: !formData.phone ? 'الرجاء إدخال رقم الهاتف' : '',
-      wilaya: !formData.wilaya ? 'الرجاء اختيار الولاية' : '',
-      commune: !formData.commune ? 'الرجاء اختيار البلدية' : '',
+      fullName: !formData.fullName.trim()
+        ? 'الرجاء إدخال الاسم الكامل'
+        : undefined,
+      phone: !formData.phone.trim()
+        ? 'الرجاء إدخال رقم الهاتف'
+        : undefined,
+      wilaya: !formData.wilaya
+        ? 'الرجاء اختيار الولاية'
+        : undefined,
+      commune: !formData.commune
+        ? 'الرجاء اختيار البلدية'
+        : undefined,
     });
+
     return;
   }
 
-  // Honeypot check
+  // Honeypot: silently reject automated submissions
   if (formData.website_hp) {
-    setShowSuccess(true);
+    return;
+  }
+
+  // Full validation
+  if (!validate()) {
     return;
   }
 
@@ -160,7 +185,9 @@ export default function OrderForm() {
   try {
     const res = await fetch('/api/order', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+      },
       body: JSON.stringify({
         full_name: formData.fullName,
         phone_number: formData.phone,
@@ -169,21 +196,77 @@ export default function OrderForm() {
         address: formData.address,
         notes: formData.notes,
         website_hp: formData.website_hp,
-        turnstileToken: typeof turnstileToken !== 'undefined' ? turnstileToken : undefined,
+        turnstileToken: turnstileToken || undefined,
       }),
     });
 
     const data = await res.json();
 
-    if (!res.ok) {
-      throw new Error(data.message || 'حدث خطأ أثناء إرسال الطلب');
+    /*
+     * IMPORTANT:
+     * A duplicate request is NOT a successful purchase.
+     * The API explicitly tells us when the phone number
+     * already has an order within the protected period.
+     */
+    if (data.isDuplicate) {
+      setShowDuplicate(true);
+      return;
     }
 
-    // Success response handling
-    setShowSuccess(true);
+    /*
+     * Any other failed response is NOT a purchase.
+     */
+    if (!res.ok || !data.success) {
+      throw new Error(
+        data.message || 'حدث خطأ أثناء إرسال الطلب'
+      );
+    }
+
+    /*
+     * PURCHASE EVENT
+     *
+     * This executes ONLY after the API confirms that
+     * the order was successfully created.
+     *
+     * Therefore:
+     * - New order      → Purchase fires
+     * - Duplicate      → Purchase does NOT fire
+     * - Validation     → Purchase does NOT fire
+     * - Bot blocked    → Purchase does NOT fire
+     * - Database error → Purchase does NOT fire
+     */
+    if (typeof window !== 'undefined' && typeof window.fbq === 'function') {
+      const totalValue =
+        PRODUCT_PRICE + (shippingPrice ?? getShippingPrice(formData.wilaya));
+
+      window.fbq('track', 'Purchase', {
+        value: totalValue,
+        currency: 'DZD',
+        content_name: 'Ensemble Elegance - Collection 2026',
+        content_type: 'product',
+      });
+    }
+
+    // Purchase event — fires ONLY after the order was successfully created
+if (typeof window !== 'undefined' && typeof (window as any).fbq === 'function') {
+  (window as any).fbq('track', 'Purchase', {
+    value: data.total_price ?? PRODUCT_PRICE + (shippingPrice ?? 0),
+    currency: 'DZD',
+  });
+}
+
+// Show success popup only after successful order creation
+setShowSuccess(true);
+
   } catch (error: any) {
     console.error('Submission error:', error);
-    alert(error.message || 'حدث خطأ غير متوقع. يرجى المحاولة مرة أخرى.');
+
+    setErrors({
+      general:
+        error?.message ||
+        'حدث خطأ غير متوقع. يرجى المحاولة مرة أخرى.',
+    });
+
   } finally {
     setIsSubmitting(false);
   }
