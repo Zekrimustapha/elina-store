@@ -11,7 +11,7 @@ const tajawal = Tajawal({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://elina-store.dz"),
+  metadataBase: new URL("https://elina-store.vercel.app"),
 
   title: "ELINA COLLECTIONS | Ensemble Elegance - Collection 2026",
 
@@ -24,7 +24,7 @@ export const metadata: Metadata = {
     description:
       "أناقة لا تُنسى لكل مناسبة. احصلي على فستان Ensemble Elegance حصرياً من متجرنا مع توصيل سريع لجميع الولايات والدفع عند الاستلام.",
 
-    url: "https://elina-store.dz",
+    url: "https://elina-store.vercel.app",
 
     siteName: "ELINA COLLECTIONS",
 
