@@ -17,18 +17,27 @@ interface Order {
   product_price: number;
   shipping_price: number;
   total_price: number;
-  status: 'New' | 'Confirmed' | 'Processing' | 'Shipped' | 'Delivered' | 'Cancelled';
+  status: string;
   notes: string;
 }
 
+// Display labels/colors for ALL statuses (including legacy) so historical
+// orders still render correctly in the table and filters.
 const statusLabels: Record<string, { label: string; color: string }> = {
   New: { label: 'جديد', color: 'bg-blue-100 text-blue-800 border-blue-200' },
   Confirmed: { label: 'مؤكد', color: 'bg-amber-100 text-amber-800 border-amber-200' },
-  Processing: { label: 'قيد التحضير', color: 'bg-purple-100 text-purple-800 border-purple-200' },
-  Shipped: { label: 'تم الشحن', color: 'bg-indigo-100 text-indigo-800 border-indigo-200' },
-  Delivered: { label: 'تم التوصيل', color: 'bg-green-100 text-green-800 border-green-200' },
+  NoAnswer1: { label: 'العميل لا يجيب 1 + SMS', color: 'bg-orange-100 text-orange-800 border-orange-200' },
+  NoAnswer2: { label: 'العميل لا يجيب 2', color: 'bg-orange-100 text-orange-800 border-orange-200' },
+  NoAnswer3: { label: 'العميل لا يجيب 3', color: 'bg-rose-100 text-rose-800 border-rose-200' },
   Cancelled: { label: 'ملغي', color: 'bg-red-100 text-red-800 border-red-200' },
+  // legacy (historical compatibility only — not offered in the dropdown):
+  Processing: { label: 'قيد التحضير (سابق)', color: 'bg-purple-100 text-purple-800 border-purple-200' },
+  Shipped: { label: 'تم الشحن (سابق)', color: 'bg-indigo-100 text-indigo-800 border-indigo-200' },
+  Delivered: { label: 'تم التوصيل (سابق)', color: 'bg-green-100 text-green-800 border-green-200' },
 };
+
+// The active six-status workflow shown in the dropdown and filter bar.
+const ACTIVE_STATUSES = ['New', 'Confirmed', 'NoAnswer1', 'NoAnswer2', 'NoAnswer3', 'Cancelled'];
 
 export default function AdminPage() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -204,9 +213,9 @@ export default function AdminPage() {
             </span>
           </div>
           <div className="bg-white p-5 rounded-2xl border border-neutral-200/80 shadow-sm">
-            <span className="text-xs text-green-600 font-bold block mb-1">تم التوصيل</span>
+            <span className="text-xs text-green-600 font-bold block mb-1">مؤكد</span>
             <span className="text-2xl sm:text-3xl font-extrabold text-green-600 font-sans">
-              {orders.filter((o) => o.status === 'Delivered').length}
+              {orders.filter((o) => o.status === 'Confirmed').length}
             </span>
           </div>
           <div className="bg-white p-5 rounded-2xl border border-neutral-200/80 shadow-sm">
@@ -235,7 +244,7 @@ export default function AdminPage() {
           </div>
 
           <div className="flex flex-wrap gap-2 w-full sm:w-auto">
-            {['ALL', 'New', 'Confirmed', 'Processing', 'Shipped', 'Delivered', 'Cancelled'].map((st) => (
+            {['ALL', ...ACTIVE_STATUSES].map((st) => (
               <button
                 key={st}
                 onClick={() => setStatusFilter(st)}
@@ -308,12 +317,18 @@ export default function AdminPage() {
                             value={order.status}
                             onChange={(e) => handleUpdateStatus(order.id, e.target.value)}
                           >
-                            <option value="New">جديد</option>
-                            <option value="Confirmed">مؤكد</option>
-                            <option value="Processing">قيد التحضير</option>
-                            <option value="Shipped">تم الشحن</option>
-                            <option value="Delivered">تم التوصيل</option>
-                            <option value="Cancelled">ملغي</option>
+                            {ACTIVE_STATUSES.map((st) => (
+                              <option key={st} value={st}>
+                                {statusLabels[st]?.label || st}
+                              </option>
+                            ))}
+                            {/* If this order still carries a legacy status, show it (disabled)
+                                so the value is visible instead of silently mismatching. */}
+                            {!ACTIVE_STATUSES.includes(order.status) && (
+                              <option value={order.status} disabled>
+                                {statusLabels[order.status]?.label || order.status}
+                              </option>
+                            )}
                           </select>
                         </td>
                       </tr>

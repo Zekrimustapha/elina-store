@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Script from 'next/script';
 import { wilayas, getCommunesByWilaya } from '@/lib/algeria-data';
 import { PRODUCT_PRICE, getShippingPrice } from '@/lib/shipping';
@@ -50,6 +50,9 @@ export default function OrderForm() {
   
   const [showSuccess, setShowSuccess] = useState(false);
   const [showDuplicate, setShowDuplicate] = useState(false);
+
+  // Guards Purchase against double-firing for a single confirmed order.
+  const purchaseFiredRef = useRef(false);
 
   const siteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
   const isTurnstileConfigured = Boolean(
@@ -223,21 +226,33 @@ export default function OrderForm() {
     }
 
     /*
-     * PURCHASE EVENT
+     * PURCHASE EVENT — single source of truth.
      *
-     * This executes ONLY after the API confirms that
-     * the order was successfully created.
+     * Fires ONLY when the backend explicitly confirms a genuinely
+     * created NEW order (data.isNewOrder === true). This is NOT the
+     * same as res.ok or data.success:
+     *   - New order        → isNewOrder true  → Purchase fires (once)
+     *   - Duplicate        → handled above    → Purchase does NOT fire
+     *   - Bot / honeypot   → isNewOrder false  → Purchase does NOT fire
+     *   - Validation error → data.success false → Purchase does NOT fire
+     *   - Database failure → data.success false → Purchase does NOT fire
      *
-     * Therefore:
-     * - New order      → Purchase fires
-     * - Duplicate      → Purchase does NOT fire
-     * - Validation     → Purchase does NOT fire
-     * - Bot blocked    → Purchase does NOT fire
-     * - Database error → Purchase does NOT fire
+     * The value comes from the server-confirmed order total (per-wilaya),
+     * never a hardcoded amount. A ref guard prevents any double-fire
+     * within the same submission flow.
      */
-    if (typeof window !== 'undefined' && typeof window.fbq === 'function') {
+    if (
+      data.isNewOrder === true &&
+      !purchaseFiredRef.current &&
+      typeof window !== 'undefined' &&
+      typeof window.fbq === 'function'
+    ) {
+      purchaseFiredRef.current = true;
+
       const totalValue =
-        PRODUCT_PRICE + (shippingPrice ?? getShippingPrice(formData.wilaya));
+        typeof data.total_price === 'number'
+          ? data.total_price
+          : PRODUCT_PRICE + (shippingPrice ?? getShippingPrice(formData.wilaya));
 
       window.fbq('track', 'Purchase', {
         value: totalValue,
@@ -247,16 +262,12 @@ export default function OrderForm() {
       });
     }
 
-    // Purchase event — fires ONLY after the order was successfully created
-if (typeof window !== 'undefined' && typeof (window as any).fbq === 'function') {
-  (window as any).fbq('track', 'Purchase', {
-    value: data.total_price ?? PRODUCT_PRICE + (shippingPrice ?? 0),
-    currency: 'DZD',
-  });
-}
-
-// Show success popup only after successful order creation
-setShowSuccess(true);
+    // Show success popup only after successful order creation.
+    // The modal is a UI concern and is intentionally decoupled from
+    // Purchase tracking above.
+    if (data.isNewOrder === true) {
+      setShowSuccess(true);
+    }
 
   } catch (error: any) {
     console.error('Submission error:', error);

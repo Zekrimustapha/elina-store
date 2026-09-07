@@ -44,7 +44,20 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ success: false, message: 'بيانات غير مكتملة' }, { status: 400 });
   }
 
-  const validStatuses = ['New', 'Confirmed', 'Processing', 'Shipped', 'Delivered', 'Cancelled'];
+  // Active statuses the admin can set, plus legacy values still accepted so
+  // historical orders can be re-saved without being rejected.
+  const validStatuses = [
+    'New',
+    'Confirmed',
+    'NoAnswer1',
+    'NoAnswer2',
+    'NoAnswer3',
+    'Cancelled',
+    // legacy (historical compatibility):
+    'Processing',
+    'Shipped',
+    'Delivered',
+  ];
   if (!validStatuses.includes(body.status)) {
     return NextResponse.json({ success: false, message: 'حالة غير صالحة' }, { status: 400 });
   }

@@ -10,6 +10,7 @@ import {
 import { PRODUCT_PRICE, PRODUCT_NAME, getShippingPrice } from '@/lib/shipping';
 import { checkRateLimit } from '@/lib/rate-limiter';
 import { getServiceSupabase } from '@/lib/supabase';
+import { sendOrderNotification } from '@/lib/telegram';
 
 // In-memory duplicate cache as an additional fast-path guard
 const recentOrdersByPhone = new Map<string, number>();
@@ -62,8 +63,10 @@ export async function POST(request: Request) {
     const { full_name, phone_number, wilaya, commune, notes, website_hp, turnstileToken } = body;
 
     // 3. Honeypot check (Silent discard for bots)
+    // NOTE: We intentionally return isNewOrder:false so the frontend shows a
+    // neutral success UI to the bot but NEVER fires a Meta Purchase event.
     if (website_hp && String(website_hp).trim().length > 0) {
-      return NextResponse.json({ success: true, message: 'Order created' });
+      return NextResponse.json({ success: true, isNewOrder: false, message: 'Order created' });
     }
 
     // 4. Cloudflare Turnstile Verification (Graceful bypass if unconfigured in local/dev mode)
@@ -140,13 +143,21 @@ export async function POST(request: Request) {
     const supabase = getServiceSupabase();
 
     if (supabase) {
-      // Primary atomic execution via PostgreSQL function matching the 4 core fields + notes
+      // Primary atomic execution via PostgreSQL function.
+      // IMPORTANT: pass the full order payload including the server-computed
+      // prices so the DB stores the REAL per-wilaya total (not a fixed value).
       const { data: rpcData, error: rpcError } = await supabase.rpc('create_order_if_allowed', {
         p_full_name: safeFullName,
         p_phone_number: phone_number,
         p_normalized_phone: normalizedPhone,
         p_wilaya: safeWilaya,
         p_commune: safeCommune,
+        p_address: safeCommune, // address field removed from form; commune used as address
+        p_size: safeSize,
+        p_product_name: PRODUCT_NAME,
+        p_product_price: PRODUCT_PRICE,
+        p_shipping_price: shippingPrice,
+        p_total_price: totalPrice,
         p_notes: safeNotes,
       });
 
@@ -155,12 +166,35 @@ export async function POST(request: Request) {
           recentOrdersByPhone.set(normalizedPhone, now);
           return NextResponse.json({
             success: false,
+            isNewOrder: false,
             isDuplicate: true,
             message: 'لقد قمت بإرسال طلبية من قبل.',
           });
         }
+        // Genuine new order created in the database.
         recentOrdersByPhone.set(normalizedPhone, now);
-        return NextResponse.json({ success: true, message: 'Order created successfully' });
+
+        // Telegram notification — fires ONLY here (real new order via RPC).
+        // Never throws; a failure cannot fail the order (see telegram.ts).
+        await sendOrderNotification({
+          full_name: safeFullName,
+          phone_number: phone_number,
+          wilaya: safeWilaya,
+          commune: safeCommune,
+          product_price: PRODUCT_PRICE,
+          shipping_price: shippingPrice,
+          total_price: rpcData.total_price ?? totalPrice,
+          status: 'New',
+          created_at: new Date().toISOString(),
+        });
+
+        return NextResponse.json({
+          success: true,
+          isNewOrder: true,
+          orderId: rpcData.order_id,
+          total_price: rpcData.total_price ?? totalPrice,
+          message: 'Order created successfully',
+        });
       }
 
       // If RPC fails/missing, fallback to direct query + insert
@@ -181,29 +215,34 @@ export async function POST(request: Request) {
           recentOrdersByPhone.set(normalizedPhone, now);
           return NextResponse.json({
             success: false,
+            isNewOrder: false,
             isDuplicate: true,
             message: 'لقد قمت بإرسال طلبية من قبل.',
           });
         }
 
         // Insert new order (using commune as address since address field is removed)
-        const { error: insertError } = await supabase.from('orders').insert({
-          full_name: safeFullName,
-          phone_number: phone_number,
-          normalized_phone: normalizedPhone,
-          wilaya: safeWilaya,
-          commune: safeCommune,
-          address: safeCommune, 
-          size: safeSize,
-          product_name: PRODUCT_NAME,
-          product_price: PRODUCT_PRICE,
-          shipping_price: shippingPrice,
-          total_price: totalPrice,
-          status: 'New',
-          notes: safeNotes,
-        });
+        const { data: insertedRows, error: insertError } = await supabase
+          .from('orders')
+          .insert({
+            full_name: safeFullName,
+            phone_number: phone_number,
+            normalized_phone: normalizedPhone,
+            wilaya: safeWilaya,
+            commune: safeCommune,
+            address: safeCommune,
+            size: safeSize,
+            product_name: PRODUCT_NAME,
+            product_price: PRODUCT_PRICE,
+            shipping_price: shippingPrice,
+            total_price: totalPrice,
+            status: 'New',
+            notes: safeNotes,
+          })
+          .select('id, total_price')
+          .single();
 
-        if (insertError) {
+        if (insertError || !insertedRows) {
           console.error('Supabase Insert Error:', insertError);
           return NextResponse.json(
             { success: false, message: 'تعذر معالجة الطلب. يرجى المحاولة مرة أخرى.' },
@@ -211,8 +250,30 @@ export async function POST(request: Request) {
           );
         }
 
+        // Genuine new order created via fallback insert.
         recentOrdersByPhone.set(normalizedPhone, now);
-        return NextResponse.json({ success: true, message: 'Order created successfully' });
+
+        // Telegram notification — fires ONLY here (real new order via fallback).
+        // Never throws; a failure cannot fail the order (see telegram.ts).
+        await sendOrderNotification({
+          full_name: safeFullName,
+          phone_number: phone_number,
+          wilaya: safeWilaya,
+          commune: safeCommune,
+          product_price: PRODUCT_PRICE,
+          shipping_price: shippingPrice,
+          total_price: insertedRows.total_price ?? totalPrice,
+          status: 'New',
+          created_at: new Date().toISOString(),
+        });
+
+        return NextResponse.json({
+          success: true,
+          isNewOrder: true,
+          orderId: insertedRows.id,
+          total_price: insertedRows.total_price ?? totalPrice,
+          message: 'Order created successfully',
+        });
       }
     } else {
       // Local test mode
@@ -224,11 +285,22 @@ export async function POST(request: Request) {
         total: totalPrice,
       });
       recentOrdersByPhone.set(normalizedPhone, now);
-      return NextResponse.json({ success: true, message: 'Order created successfully in local mode' });
+      return NextResponse.json({
+        success: true,
+        isNewOrder: true,
+        total_price: totalPrice,
+        message: 'Order created successfully in local mode',
+      });
     }
 
+    // Defensive fallthrough — should not normally be reached.
     recentOrdersByPhone.set(normalizedPhone, now);
-    return NextResponse.json({ success: true, message: 'Order created successfully' });
+    return NextResponse.json({
+      success: true,
+      isNewOrder: true,
+      total_price: totalPrice,
+      message: 'Order created successfully',
+    });
 
   } catch (error) {
     console.error('Order API Critical Error:', error);
