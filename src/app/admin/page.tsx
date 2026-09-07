@@ -49,6 +49,27 @@ export default function AdminPage() {
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [activeTab, setActiveTab] = useState<'orders' | 'settings'>('orders');
 
+  // Telegram health-check state (Settings tab).
+  const [tgTesting, setTgTesting] = useState(false);
+  const [tgResult, setTgResult] = useState<{ ok: boolean; message: string } | null>(null);
+
+  const handleTestTelegram = async () => {
+    setTgTesting(true);
+    setTgResult(null);
+    try {
+      const res = await fetch('/api/admin/test-telegram', {
+        method: 'POST',
+        headers: { 'x-admin-password': password },
+      });
+      const data = await res.json();
+      setTgResult({ ok: Boolean(data.success), message: data.message || 'تعذر إجراء الاختبار.' });
+    } catch {
+      setTgResult({ ok: false, message: 'تعذر الاتصال بالخادم.' });
+    } finally {
+      setTgTesting(false);
+    }
+  };
+
   const fetchOrders = async (pwd: string) => {
     setIsLoading(true);
     try {
@@ -200,6 +221,57 @@ export default function AdminPage() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 pt-8 space-y-6">
+        {/* Tab switcher */}
+        <div className="flex gap-2">
+          <button
+            onClick={() => setActiveTab('orders')}
+            className={`text-sm font-bold px-4 py-2 rounded-xl transition ${
+              activeTab === 'orders' ? 'bg-neutral-900 text-white' : 'bg-white text-neutral-600 border border-neutral-200 hover:bg-neutral-50'
+            }`}
+          >
+            الطلبيات
+          </button>
+          <button
+            onClick={() => setActiveTab('settings')}
+            className={`text-sm font-bold px-4 py-2 rounded-xl transition ${
+              activeTab === 'settings' ? 'bg-neutral-900 text-white' : 'bg-white text-neutral-600 border border-neutral-200 hover:bg-neutral-50'
+            }`}
+          >
+            الإعدادات والإشعارات
+          </button>
+        </div>
+
+        {activeTab === 'settings' && (
+          <div className="bg-white p-6 rounded-2xl border border-neutral-200 shadow-sm space-y-4 max-w-xl">
+            <div>
+              <h2 className="text-lg font-extrabold text-neutral-900">إشعارات تيليغرام</h2>
+              <p className="text-sm text-neutral-500 mt-1">
+                اضغط الزر لإرسال رسالة تجريبية إلى مجموعة تيليغرام والتأكد من أن الإشعارات ستصل عند كل طلب جديد.
+              </p>
+            </div>
+            <button
+              onClick={handleTestTelegram}
+              disabled={tgTesting}
+              className="bg-[#229ED9] hover:bg-[#1c8ec2] text-white font-bold py-3 px-5 rounded-xl transition disabled:opacity-60"
+            >
+              {tgTesting ? 'جاري الإرسال...' : 'إرسال رسالة تجريبية إلى تيليغرام'}
+            </button>
+            {tgResult && (
+              <div
+                className={`p-4 rounded-xl text-sm font-medium border ${
+                  tgResult.ok
+                    ? 'bg-green-50 text-green-700 border-green-200'
+                    : 'bg-red-50 text-red-700 border-red-200'
+                }`}
+              >
+                {tgResult.message}
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'orders' && (
+        <>
         {/* Statistics Cards */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           <div className="bg-white p-5 rounded-2xl border border-neutral-200/80 shadow-sm">
@@ -339,6 +411,8 @@ export default function AdminPage() {
             </table>
           </div>
         </div>
+        </>
+        )}
       </main>
     </div>
   );

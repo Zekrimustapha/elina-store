@@ -293,14 +293,16 @@ export async function POST(request: Request) {
       });
     }
 
-    // Defensive fallthrough — should not normally be reached.
-    recentOrdersByPhone.set(normalizedPhone, now);
-    return NextResponse.json({
-      success: true,
-      isNewOrder: true,
-      total_price: totalPrice,
-      message: 'Order created successfully',
-    });
+    // Defensive fallthrough — the RPC returned neither data nor an error, so we
+    // CANNOT confirm an order was actually created. Treat it as a failure:
+    //  - do NOT report a new order (that would fire a false Meta Purchase),
+    //  - do NOT mark the phone as "used" (let the customer retry cleanly),
+    //  - no Telegram is sent because no order is confirmed.
+    console.error('Order API: unexpected empty RPC result (no data, no error).');
+    return NextResponse.json(
+      { success: false, message: 'تعذر تأكيد الطلب. يرجى المحاولة مرة أخرى.' },
+      { status: 500 }
+    );
 
   } catch (error) {
     console.error('Order API Critical Error:', error);
