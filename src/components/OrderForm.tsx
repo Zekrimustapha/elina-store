@@ -54,6 +54,29 @@ export default function OrderForm() {
   // Guards Purchase against double-firing for a single confirmed order.
   const purchaseFiredRef = useRef(false);
 
+  // Guards InitiateCheckout so it fires at most once per page/session.
+  // This is a SEPARATE, diagnostic funnel event — it never calls, triggers,
+  // or substitutes the Purchase event below.
+  const initiateCheckoutFiredRef = useRef(false);
+
+  /**
+   * Fires the Meta Pixel InitiateCheckout event exactly once, on the first
+   * meaningful checkout interaction (a real form field being filled) — NOT on
+   * page view and NOT on every keystroke. Guarded by a ref so repeated field
+   * interactions cannot re-fire it. Completely independent of Purchase.
+   */
+  const fireInitiateCheckout = () => {
+    if (initiateCheckoutFiredRef.current) return;
+    initiateCheckoutFiredRef.current = true;
+
+    if (typeof window !== 'undefined' && typeof window.fbq === 'function') {
+      window.fbq('track', 'InitiateCheckout', {
+        content_name: 'Ensemble Elegance - Collection 2026',
+        content_type: 'product',
+      });
+    }
+  };
+
   const siteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
   const isTurnstileConfigured = Boolean(
     siteKey &&
@@ -84,7 +107,10 @@ export default function OrderForm() {
   const handleWilayaChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const wilayaStr = e.target.value;
     setFormData((prev) => ({ ...prev, wilaya: wilayaStr, commune: '' }));
-    
+
+    // Selecting a wilaya is meaningful checkout intent → InitiateCheckout (once).
+    if (wilayaStr) fireInitiateCheckout();
+
     if (errors.wilaya) {
       setErrors((prev) => ({ ...prev, wilaya: undefined }));
     }
@@ -107,6 +133,13 @@ export default function OrderForm() {
 
   const handleInputChange = (field: keyof FormData, value: string) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
+
+    // Typing into a REAL checkout field is meaningful intent → InitiateCheckout
+    // (once). The honeypot field is excluded so bots can never trigger it.
+    if (field !== 'website_hp' && value.trim().length > 0) {
+      fireInitiateCheckout();
+    }
+
     if (errors[field as keyof FormErrors]) {
       setErrors((prev) => ({ ...prev, [field]: undefined }));
     }
