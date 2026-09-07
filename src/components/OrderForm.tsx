@@ -166,11 +166,13 @@ export default function OrderForm() {
     if (!formData.commune) {
       newErrors.commune = 'يرجى اختيار البلدية';
     }
-    
-    if (!formData.address.trim() || formData.address.trim().length < 3) {
-      newErrors.address = 'يرجى كتابة عنوان التوصيل بالتفصيل';
-    }
-    
+
+    // NOTE: The detailed-address field was intentionally removed from the form
+    // (the call center confirms the address by phone, and the server uses the
+    // commune as the address — see api/order/route.ts). It must therefore NOT
+    // be validated here; requiring it made validate() always fail, which
+    // silently blocked every real submission from ever reaching /api/order.
+
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
